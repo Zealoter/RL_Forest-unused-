@@ -18,3 +18,4 @@ import numpy as np
 s1 = np.array([[1, 2], [2, 3]])
 s1 = np.insert(s1, 2, values=np.zeros(2), axis=1)
 print(s1)
+print(1111)
