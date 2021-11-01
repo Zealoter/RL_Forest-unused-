@@ -7,8 +7,6 @@ import random
 import control
 import joblib
 from joblib.parallel import Parallel, delayed
-import os
-import gc
 import gym
 
 
@@ -41,7 +39,7 @@ class Forest(object):
             n_estimators=200,
             state_len=5,
             max_depth=3,
-            use_feature_num=5,
+            use_feature_num=3,
     ):
         self.trees = []
         self.n_estimators = np.int(n_estimators)
@@ -107,24 +105,26 @@ class Forest(object):
         # 用相对排名(不用绝对数据)代表分数
         for i_tree in range(self.n_estimators):
             reject_ans = (total_ans - tmp_sum[i_tree, :]) / (self.n_estimators - 1)
-            evaluate_base[i_tree] = np.mean(np.abs(reject_ans - target))
-            bias_base[i_tree] = np.mean(np.abs(tmp_sum[i_tree, :] - target))
-            difference_base[i_tree] = np.mean(np.abs(tmp_sum[i_tree, :] - mean_ans))
+            evaluate_base[i_tree] = np.mean((reject_ans - target) ** 2)  # 丢掉他之后离target越进，越说明拖后腿 所以越大越好
+            bias_base[i_tree] = np.mean((tmp_sum[i_tree, :] - target) ** 2)  # 离中心近好 所以越小越好
+            difference_base[i_tree] = np.mean((tmp_sum[i_tree, :] - mean_ans) ** 2)  # 离中心远好 所以越大越好
 
         mean_bias = np.mean(bias_base)  # 用作分数权重
         mean_difference = np.mean(difference_base)  # 用作分数权重
 
-        good_idx_evaluate_base = self.get_idx(evaluate_base)  # 小的在前(好的在後)
-        good_idx_bias_base = self.get_idx(bias_base)  # 小的在前(好的在前)
-        good_idx_difference_base = self.get_idx(difference_base)  # 小的在前(好的在後)
+        good_evaluate_base = evaluate_base - np.mean(evaluate_base)
+        good_evaluate_base /= np.std(evaluate_base)  # 小的在前(好的在後)
+
+        good_bias_base = bias_base - np.mean(bias_base)
+        good_bias_base /= np.std(bias_base)  # 小的在前(好的在前)
+
+        good_difference_base = difference_base - np.mean(difference_base)
+        good_difference_base /= np.std(difference_base)  # 小的在前(好的在後)
 
         for i_tree_idx in range(self.n_estimators):
-            op_point = i_tree_idx / self.n_estimators  # 随着排名增加，分数增加
-            ne_point = 1 - i_tree_idx / self.n_estimators  # 随着排名增加，分数减少
-            e_total_evaluate[good_idx_evaluate_base[i_tree_idx]] += (
-                    op_point * (mean_difference + mean_bias))
-            d_total_evaluate[good_idx_bias_base[i_tree_idx]] += (ne_point * mean_bias)
-            d_total_evaluate[good_idx_difference_base[i_tree_idx]] += (op_point * mean_difference)
+            e_total_evaluate += (mean_difference + mean_bias) * good_evaluate_base
+            d_total_evaluate -= mean_bias * good_bias_base
+            d_total_evaluate += mean_difference * good_difference_base
 
         for i_tree in range(self.n_estimators):
             self.trees[i_tree].evaluate_value = (self.trees[i_tree].evaluate_value * self.trees[
@@ -134,8 +134,9 @@ class Forest(object):
                 i_tree].visit + d_total_evaluate[i_tree]) / (self.trees[i_tree].visit + 1)
 
             self.trees[i_tree].visit += 1
-            evaluate_history[i_tree] = self.trees[i_tree].difference_value + self.trees[
-                i_tree].evaluate_value + control.C * np.sqrt(np.log(max_play) / self.trees[i_tree].visit)
+            # evaluate_history[i_tree] = self.trees[i_tree].difference_value + self.trees[
+            #     i_tree].evaluate_value + control.C * np.sqrt(np.log(max_play) / self.trees[i_tree].visit)
+        evaluate_history = e_total_evaluate + d_total_evaluate
         print('误差:', total_bias)
         print('平均值分数:', np.mean(evaluate_history))
         print('target平均距離:', np.mean(bias_base))
@@ -234,22 +235,22 @@ class ForestAgent(object):
 
         y_true = r1 + self.gamma * q_value
         y_pred = self.forest.forest_predict(np.insert(s0, 4, values=a0, axis=1))
-        y_train = y_true * 0.2 + y_pred * 0.8
-        self.forest.train(np.insert(s0, 4, values=a0, axis=1), y_train, 20)
+        y_train = y_true * 0.05 + y_pred * 0.95
+        self.forest.train(np.insert(s0, 4, values=a0, axis=1), y_train, 10)
 
 
 if __name__ == '__main__':
     env = gym.make('CartPole-v0')
 
     params = {
-        'gamma': 0.8,
-        'epsilon_high': 0.9,
-        'epsilon_low': 0.05,
-        'decay': 200,
-        'lr': 0.001,
-        'capacity': 10000,
-        'batch_size': 32,
-        'state_space_dim': 5,
+        'gamma'           : 0.8,
+        'epsilon_high'    : 0.9,
+        'epsilon_low'     : 0.05,
+        'decay'           : 200,
+        'lr'              : 0.001,
+        'capacity'        : 10000,
+        'batch_size'      : 32,
+        'state_space_dim' : 5,
         'action_space_dim': 2
     }
     agent = ForestAgent(**params)
