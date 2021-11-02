@@ -15,7 +15,8 @@ import numpy as np
 # print(guess)
 # a = [np.array([1, 2, 3]), np.array([2, 3, 4])]
 # print(np.max(a, axis=0))
-s1 = np.array([[1, 2], [2, 3]])
-s1 = np.insert(s1, 2, values=np.zeros(2), axis=1)
-print(s1)
-print(1111)
+# s1 = np.array([[1, 2], [2, 3]])
+# s1 = np.insert(s1, 2, values=np.zeros(2), axis=1)
+# print(s1)
+# print(1111)
+print(np.random.randn(5))

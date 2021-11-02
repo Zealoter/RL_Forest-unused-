@@ -4,21 +4,22 @@ from sklearn.tree import DecisionTreeRegressor
 import copy
 from collections import deque
 import random
-import control
 import joblib
 from joblib.parallel import Parallel, delayed
 import gym
 
 
 class Tree(object):
-    def __init__(self, data, target, max_depth, state_len):
+    def __init__(self, data, target, max_depth, state_len, use_feature_num):
         self.max_depth = max_depth
         self.state_len = state_len
+        self.use_feature_num = use_feature_num
         self.reality_tree = DecisionTreeRegressor(
             max_depth=self.max_depth
         )
         self.use_feature = np.arange(self.state_len)
         np.random.shuffle(self.use_feature)
+        self.use_feature = self.use_feature[:self.use_feature_num]
         data = np.array(data)
         target = np.array(target)
 
@@ -27,7 +28,7 @@ class Tree(object):
         self.evaluate_value = 0
         self.difference_value = 0
 
-    def train(self, data):
+    def get_forecast(self, data):
         data = np.array(data)
         data.reshape(-1, self.state_len)
         return self.reality_tree.predict(data[:, self.use_feature])
@@ -61,7 +62,8 @@ class Forest(object):
                     use_data,
                     use_target,
                     self.max_depth,
-                    self.state_len
+                    self.state_len,
+                    self.use_feature_num
                 )
             )
         self.trees = tmp_forest
@@ -69,17 +71,13 @@ class Forest(object):
     def forest_predict(self, data):
         tmp_sum = []
         for i_tree in range(self.n_estimators):
-            tmp_sum.append(self.trees[i_tree].train(data))
+            tmp_sum.append(self.trees[i_tree].get_forecast(data))
         return np.mean(tmp_sum, axis=0)
-
-    def get_idx(self, evaluate_base):
-        idx_evaluate_base = np.arange(self.n_estimators)
-        return idx_evaluate_base[evaluate_base.argsort()]
 
     def train(self, data, target, kill):
         # show_men_use()
         max_play = -1
-        tmp_sum = [tmp_tree.train(data) for tmp_tree in self.trees]
+        tmp_sum = [tmp_tree.get_forecast(data) for tmp_tree in self.trees]
 
         for i_tree in range(self.n_estimators):
             if self.trees[i_tree].visit > max_play:
@@ -94,9 +92,9 @@ class Forest(object):
         total_ans = mean_ans * self.n_estimators
         total_bias = np.mean((mean_ans - target) ** 2)
 
-        evaluate_base = np.zeros(self.n_estimators)  # 去掉這一颗树的分數(越大越好)
-        bias_base = np.zeros(self.n_estimators)  # 树和目標的距離(越小越好)
-        difference_base = np.zeros(self.n_estimators)  # 树和其余树的距離(越大越好)
+        base_evaluate = np.zeros(self.n_estimators)  # 去掉這一颗树的分數(越大越好)
+        base_bias = np.zeros(self.n_estimators)  # 树和目標的距離(越小越好)
+        base_difference = np.zeros(self.n_estimators)  # 树和其余树的距離(越大越好)
 
         evaluate_history = np.zeros(self.n_estimators)
         e_total_evaluate = np.zeros(self.n_estimators)
@@ -105,26 +103,28 @@ class Forest(object):
         # 用相对排名(不用绝对数据)代表分数
         for i_tree in range(self.n_estimators):
             reject_ans = (total_ans - tmp_sum[i_tree, :]) / (self.n_estimators - 1)
-            evaluate_base[i_tree] = np.mean((reject_ans - target) ** 2)  # 丢掉他之后离target越进，越说明拖后腿 所以越大越好
-            bias_base[i_tree] = np.mean((tmp_sum[i_tree, :] - target) ** 2)  # 离中心近好 所以越小越好
-            difference_base[i_tree] = np.mean((tmp_sum[i_tree, :] - mean_ans) ** 2)  # 离中心远好 所以越大越好
+            base_evaluate[i_tree] = np.mean((reject_ans - target) ** 2)  # 丢掉他之后离target越进，越说明拖后腿 所以越大越好
+            base_bias[i_tree] = np.mean((tmp_sum[i_tree, :] - target) ** 2)  # 离中心近好 所以越小越好
+            base_difference[i_tree] = np.mean((tmp_sum[i_tree, :] - mean_ans) ** 2)  # 离中心远好 所以越大越好
 
-        mean_bias = np.mean(bias_base)  # 用作分数权重
-        mean_difference = np.mean(difference_base)  # 用作分数权重
+        mean_bias = np.mean(base_bias)  # 用作分数权重
+        mean_difference = np.mean(base_difference)  # 用作分数权重
 
-        good_evaluate_base = evaluate_base - np.mean(evaluate_base)
-        good_evaluate_base /= np.std(evaluate_base)  # 小的在前(好的在後)
+        base_evaluate = base_evaluate - np.mean(base_evaluate)
+        base_evaluate /= np.std(base_evaluate)  # 小的在前(好的在後)
+        # base_evaluate /= 3
 
-        good_bias_base = bias_base - np.mean(bias_base)
-        good_bias_base /= np.std(bias_base)  # 小的在前(好的在前)
+        base_bias = base_bias - np.mean(base_bias)
+        base_bias /= np.std(base_bias)  # 小的在前(好的在前)
+        # base_bias /= 3
 
-        good_difference_base = difference_base - np.mean(difference_base)
-        good_difference_base /= np.std(difference_base)  # 小的在前(好的在後)
+        base_difference = base_difference - np.mean(base_difference)
+        base_difference /= np.std(base_difference)  # 小的在前(好的在後)
+        # base_difference /= 3
 
-        for i_tree_idx in range(self.n_estimators):
-            e_total_evaluate += (mean_difference + mean_bias) * good_evaluate_base
-            d_total_evaluate -= mean_bias * good_bias_base
-            d_total_evaluate += mean_difference * good_difference_base
+        e_total_evaluate += (1 + 1) * base_evaluate
+        d_total_evaluate -= 1 * base_bias
+        d_total_evaluate += 1 * base_difference
 
         for i_tree in range(self.n_estimators):
             self.trees[i_tree].evaluate_value = (self.trees[i_tree].evaluate_value * self.trees[
@@ -134,14 +134,14 @@ class Forest(object):
                 i_tree].visit + d_total_evaluate[i_tree]) / (self.trees[i_tree].visit + 1)
 
             self.trees[i_tree].visit += 1
-            # evaluate_history[i_tree] = self.trees[i_tree].difference_value + self.trees[
-            #     i_tree].evaluate_value + control.C * np.sqrt(np.log(max_play) / self.trees[i_tree].visit)
-        evaluate_history = e_total_evaluate + d_total_evaluate
+            evaluate_history[i_tree] = self.trees[i_tree].difference_value + self.trees[
+                i_tree].evaluate_value + 0.1 * np.sqrt(np.log(max_play) / (max_play + 1 - self.trees[i_tree].visit))
+
         print('误差:', total_bias)
         print('平均值分数:', np.mean(evaluate_history))
-        print('target平均距離:', np.mean(bias_base))
-        print('difference_base平均距離:', np.mean(difference_base))
-        print('target平均距離和difference的差距:', np.mean(bias_base) - np.mean(difference_base))
+        print('target平均距離:', mean_bias)
+        print('difference_base平均距離:', mean_difference)
+        print('target平均距離和difference的差距:', mean_bias - mean_difference)
 
         # 删除差的树
         idx = np.arange(self.n_estimators)
@@ -163,7 +163,8 @@ class Forest(object):
                     data,
                     target_change,
                     self.max_depth,
-                    self.state_len
+                    self.state_len,
+                    self.use_feature_num
                 )
             )
 
@@ -229,13 +230,12 @@ class ForestAgent(object):
         r1 = np.array(r1)
         s1 = np.array(s1)
         q_value0 = self.forest.forest_predict(np.insert(s1, 4, values=np.zeros(self.batch_size), axis=1))
-        q_value0 += np.random.randn(self.batch_size) * 0.02
         q_value1 = self.forest.forest_predict(np.insert(s1, 4, values=np.ones(self.batch_size), axis=1))
         q_value = np.max([q_value0, q_value1], axis=0)
 
         y_true = r1 + self.gamma * q_value
         y_pred = self.forest.forest_predict(np.insert(s0, 4, values=a0, axis=1))
-        y_train = y_true * 0.05 + y_pred * 0.95
+        y_train = y_true * 0.5 + y_pred * 0.5
         self.forest.train(np.insert(s0, 4, values=a0, axis=1), y_train, 10)
 
 
