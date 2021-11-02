@@ -135,7 +135,7 @@ class Forest(object):
 
             self.trees[i_tree].visit += 1
             evaluate_history[i_tree] = self.trees[i_tree].difference_value + self.trees[
-                i_tree].evaluate_value + 0.1 * np.sqrt(np.log(max_play) / (max_play + 1 - self.trees[i_tree].visit))
+                i_tree].evaluate_value + 0.1 * np.sqrt(np.log(max_play) / (1 + max_play - self.trees[i_tree].visit))
 
         print('误差:', total_bias)
         print('平均值分数:', np.mean(evaluate_history))
@@ -211,6 +211,7 @@ class ForestAgent(object):
         else:
             tmp_obs = [list(obs) + [0], list(obs) + [1]]
             action_q = self.forest.forest_predict(tmp_obs)
+            action_q += (np.random.randn(2) * 0.05)
             action = np.int(action_q[1] > action_q[0])
         return action
 
@@ -235,7 +236,7 @@ class ForestAgent(object):
 
         y_true = r1 + self.gamma * q_value
         y_pred = self.forest.forest_predict(np.insert(s0, 4, values=a0, axis=1))
-        y_train = y_true * 0.5 + y_pred * 0.5
+        y_train = y_true *1 + y_pred * 0
         self.forest.train(np.insert(s0, 4, values=a0, axis=1), y_train, 10)
 
 
