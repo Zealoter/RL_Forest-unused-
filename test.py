@@ -19,4 +19,4 @@ import numpy as np
 # s1 = np.insert(s1, 2, values=np.zeros(2), axis=1)
 # print(s1)
 # print(1111)
-print(np.random.randn(5))
+print(np.log(2.7))

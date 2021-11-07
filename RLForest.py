@@ -25,8 +25,7 @@ class Tree(object):
 
         self.reality_tree.fit(data[:, self.use_feature], target)
         self.visit = 0
-        self.evaluate_value = 0
-        self.difference_value = 0
+        self.ucb_value = 0
 
     def get_forecast(self, data):
         data = np.array(data)
@@ -34,10 +33,18 @@ class Tree(object):
         return self.reality_tree.predict(data[:, self.use_feature])
 
 
+def cal_distance(a, b):
+    return np.sqrt(np.sum((a - b) ** 2))
+
+
+def mse_loss(a, b):
+    return np.mean((a - b) ** 2)
+
+
 class Forest(object):
     def __init__(
             self,
-            n_estimators=200,
+            n_estimators=400,
             state_len=5,
             max_depth=3,
             use_feature_num=3,
@@ -78,34 +85,35 @@ class Forest(object):
         # show_men_use()
         max_play = -1
         tmp_sum = [tmp_tree.get_forecast(data) for tmp_tree in self.trees]
-
+        total_play_times = 0
         for i_tree in range(self.n_estimators):
+            total_play_times += self.trees[i_tree].visit
             if self.trees[i_tree].visit > max_play:
                 max_play = self.trees[i_tree].visit
         max_play += 1
-
+        total_play_times += self.n_estimators
         tmp_sum = np.array(tmp_sum)
         target = np.array(target)
 
         # 现有的预测和训练集的差异
         mean_ans = np.mean(tmp_sum, axis=0)
         total_ans = mean_ans * self.n_estimators
-        total_bias = np.mean((mean_ans - target) ** 2)
+
+        total_bias = mse_loss(mean_ans, target)
 
         base_evaluate = np.zeros(self.n_estimators)  # 去掉這一颗树的分數(越大越好)
         base_bias = np.zeros(self.n_estimators)  # 树和目標的距離(越小越好)
         base_difference = np.zeros(self.n_estimators)  # 树和其余树的距離(越大越好)
 
         evaluate_history = np.zeros(self.n_estimators)
-        e_total_evaluate = np.zeros(self.n_estimators)
-        d_total_evaluate = np.zeros(self.n_estimators)
+        this_time_evaluate = np.zeros(self.n_estimators)
 
         # 用相对排名(不用绝对数据)代表分数
         for i_tree in range(self.n_estimators):
             reject_ans = (total_ans - tmp_sum[i_tree, :]) / (self.n_estimators - 1)
-            base_evaluate[i_tree] = np.mean((reject_ans - target) ** 2)  # 丢掉他之后离target越进，越说明拖后腿 所以越大越好
-            base_bias[i_tree] = np.mean((tmp_sum[i_tree, :] - target) ** 2)  # 离中心近好 所以越小越好
-            base_difference[i_tree] = np.mean((tmp_sum[i_tree, :] - mean_ans) ** 2)  # 离中心远好 所以越大越好
+            base_evaluate[i_tree] = mse_loss(reject_ans, target)  # 丢掉他之后离target越进，越说明拖后腿 所以越大越好
+            base_bias[i_tree] = cal_distance(tmp_sum[i_tree, :], target)  # 离中心近好 所以越小越好
+            base_difference[i_tree] = cal_distance(tmp_sum[i_tree, :], mean_ans)  # 离中心远好 所以越大越好
 
         mean_bias = np.mean(base_bias)  # 用作分数权重
         mean_difference = np.mean(base_difference)  # 用作分数权重
@@ -122,23 +130,24 @@ class Forest(object):
         base_difference /= np.std(base_difference)  # 小的在前(好的在後)
         # base_difference /= 3
 
-        e_total_evaluate += (1 + 1) * base_evaluate
-        d_total_evaluate -= 1 * base_bias
-        d_total_evaluate += 1 * base_difference
+        this_time_evaluate += 2 * base_evaluate
+        this_time_evaluate -= 1 * base_bias
+        this_time_evaluate += 1 * base_difference
 
         for i_tree in range(self.n_estimators):
-            self.trees[i_tree].evaluate_value = (self.trees[i_tree].evaluate_value * self.trees[
-                i_tree].visit + e_total_evaluate[i_tree]) / (self.trees[i_tree].visit + 1)
+            self.trees[i_tree].ucb_value = (self.trees[i_tree].ucb_value * self.trees[
+                i_tree].visit + this_time_evaluate[i_tree]) / (self.trees[i_tree].visit + 1)
 
-            self.trees[i_tree].difference_value = (self.trees[i_tree].difference_value * self.trees[
-                i_tree].visit + d_total_evaluate[i_tree]) / (self.trees[i_tree].visit + 1)
+            self.trees[i_tree].ucb_value = (self.trees[i_tree].ucb_value * self.trees[
+                i_tree].visit + this_time_evaluate[i_tree]) / (self.trees[i_tree].visit + 1)
 
             self.trees[i_tree].visit += 1
-            evaluate_history[i_tree] = self.trees[i_tree].difference_value + self.trees[
-                i_tree].evaluate_value + 0.1 * np.sqrt(np.log(max_play) / (1 + max_play - self.trees[i_tree].visit))
+            evaluate_history[i_tree] = self.trees[i_tree].ucb_value - 0.3 * np.sqrt(
+                np.log(total_play_times) / (self.trees[i_tree].visit + 1))
 
         print('误差:', total_bias)
-        print('平均值分数:', np.mean(evaluate_history))
+        print('分数平均值:', np.mean(evaluate_history))
+        print('分数标准差:', np.std(evaluate_history))
         print('target平均距離:', mean_bias)
         print('difference_base平均距離:', mean_difference)
         print('target平均距離和difference的差距:', mean_bias - mean_difference)
@@ -180,8 +189,8 @@ class Forest(object):
         if is_refresh:
             for i_tree in range(self.n_estimators):
                 self.trees[i_tree].visit = 0
-                self.trees[i_tree].evaluate_value = 0
-                self.trees[i_tree].difference_value = 0
+                self.trees[i_tree].ucb_value = 0
+                self.trees[i_tree].ucb_value = 0
 
 
 class ForestAgent(object):
@@ -203,13 +212,13 @@ class ForestAgent(object):
         self.forest = Forest()
         self.forest.init_random_forest()
 
-    def act(self, obs):
+    def act(self, this_time_obs):
         self.steps += 1
         epsilon = self.epsilon_low + (self.epsilon_high - self.epsilon_low) * (np.exp(-1.0 * self.steps / self.decay))
         if random.random() < epsilon:
             action = random.randrange(self.action_space_dim)
         else:
-            tmp_obs = [list(obs) + [0], list(obs) + [1]]
+            tmp_obs = [list(this_time_obs) + [0], list(this_time_obs) + [1]]
             action_q = self.forest.forest_predict(tmp_obs)
             action_q += (np.random.randn(2) * 0.05)
             action = np.int(action_q[1] > action_q[0])
@@ -236,8 +245,8 @@ class ForestAgent(object):
 
         y_true = r1 + self.gamma * q_value
         y_pred = self.forest.forest_predict(np.insert(s0, 4, values=a0, axis=1))
-        y_train = y_true *1 + y_pred * 0
-        self.forest.train(np.insert(s0, 4, values=a0, axis=1), y_train, 10)
+        y_train = y_true * 0.10 + y_pred * 0.90
+        self.forest.train(np.insert(s0, 4, values=a0, axis=1), y_train, 20)
 
 
 if __name__ == '__main__':
@@ -258,7 +267,7 @@ if __name__ == '__main__':
     score = []
     mean = []
 
-    for episode in range(2000):
+    for episode in range(200):
         obs = env.reset()
         total_reward = 1
         while True:
