@@ -19,4 +19,6 @@ import numpy as np
 # s1 = np.insert(s1, 2, values=np.zeros(2), axis=1)
 # print(s1)
 # print(1111)
-print(np.log(2.7))
+a=np.array([[0,1],[-0.5,4]])
+a=np.clip(a,-1,1)
+print(a)
