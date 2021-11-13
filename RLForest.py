@@ -122,6 +122,9 @@ class Forest(object):
             base_evaluate[i_tree] = mse_loss(reject_ans, target)  # 丢掉他之后离target的距离，越大说明越丢不得，重要
             base_bias[i_tree] = cal_distance(tmp_sum[i_tree, :], target)  # 离中心近好 所以越小越好
             base_difference[i_tree] = cal_distance(tmp_sum[i_tree, :], mean_ans)  # 离中心远好 所以越大越好
+        base_bias = np.log(base_bias)
+        base_evaluate = np.log(base_evaluate)
+        base_difference = np.log(base_difference)
 
         mean_bias = np.mean(base_bias)  # 用作分数权重
         mean_difference = np.mean(base_difference)  # 用作分数权重
@@ -132,7 +135,7 @@ class Forest(object):
         base_difference = normalization(base_difference)
 
         this_time_evaluate += 2 * base_evaluate
-        this_time_evaluate -= 1 * base_bias
+        # this_time_evaluate -= 1 * base_bias
         this_time_evaluate += 1 * base_difference
 
         for i_tree in range(self.n_estimators):
@@ -240,9 +243,7 @@ class ForestAgent(object):
             self.buffer.pop(0)
         self.buffer.append(transition)
 
-    def learn(self):
-        if (len(self.buffer)) < self.batch_size:
-            return
+    def learn_once(self):
 
         samples = random.sample(self.buffer, self.batch_size)
         s0, a0, r1, s1 = zip(*samples)
@@ -263,6 +264,14 @@ class ForestAgent(object):
         y_train = y_true * 1 + y_pred * 0
         self.forest.train(s0_a, y_train, self.kill_num, self.lr)
 
+    def learn(self, times):
+        if (len(self.buffer)) < self.batch_size:
+            return False
+        for itr in range(times):
+            print('第', itr, '次训练：')
+            self.learn_once()
+        return True
+
 
 if __name__ == '__main__':
     env = gym.make('CartPole-v0')
@@ -271,13 +280,13 @@ if __name__ == '__main__':
         'gamma'           : 0.9,
         'epsilon_high'    : 0.9,
         'epsilon_low'     : 0.05,
-        'decay'           : 200,
-        'lr'              : 0.05,
+        'decay'           : 400,
+        'lr'              : 1,
         'capacity'        : 2000,
         'batch_size'      : 256,
         'state_space_dim' : 5,
         'action_space_dim': 2,
-        'n_estimators'    : 400,
+        'n_estimators'    : 200,
         'max_depth'       : 3,
         'use_feature_num' : 3,
         'kill_num'        : 10
@@ -305,7 +314,9 @@ if __name__ == '__main__':
 
         print('第', episode, '轮完：')
         print(total_reward)
-        for tmp_i in range(10000):
-            agent.learn()
+
+        is_trained = agent.learn(5)
+        # if is_trained:
+        #     break
         score.append(total_reward)
         mean.append(sum(score[-100:]) / 100)

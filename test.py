@@ -22,3 +22,4 @@ import numpy as np
 a=np.array([[0,1],[-0.5,4]])
 a=np.clip(a,-1,1)
 print(a)
+print(np.log(10))
